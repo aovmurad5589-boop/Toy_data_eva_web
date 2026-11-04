@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Toy Data Evaluation Center - Switch Play</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+</head>
+<body>
+    <div class="app-container">
+        <header class="navbar">
+            <h1>Toy Data Center</h1>
+            <span class="mode-badge">Switch Play Evaluation Engine</span>
+        </header>
+
+        <section class="upload-section">
+            <h2>Upload Telemetry Data</h2>
+            <p>Select your device's <code>metrics.csv</code> file. Developer pre-flight tests are automatically filtered out.</p>
+            <div class="input-group">
+                <input type="file" id="csvFileInput" accept=".csv" />
+                <button id="analyzeBtn" onclick="uploadAndEvaluate()">Evaluate Switch Play Data</button>
+                <button id="exportBtn" class="export-btn" onclick="exportDashboardAsImage()">📥 Export Dashboard as Graphic</button>
+            </div>
+        </section>
+
+        <div id="dashboard" class="dashboard-hidden">
+            
+            <div class="nav-tabs" id="userTabsContainer">
+                <button class="tab-btn active" onclick="showOverallStats()">📊 Overall Summary</button>
+            </div>
+
+            <div class="view-header">
+                <h2 id="viewTitle">Overall Evaluation Dashboard</h2>
+                <p id="viewSubtitle">Aggregated statistics across all identified children sessions.</p>
+            </div>
+
+            <!-- Advanced Improvement Banner -->
+            <div class="improvement-banner" id="improvementBanner">
+                <div class="banner-item">
+                    <span class="banner-label">Learning Trajectory (Mann-Kendall):</span>
+                    <span class="banner-val" id="b_trend">--</span>
+                </div>
+                <div class="banner-item">
+                    <span class="banner-label">Efficiency Velocity:</span>
+                    <span class="banner-val" id="b_velocity">--</span>
+                </div>
+                <div class="banner-item">
+                    <span class="banner-label">Statistical Significance (p-value):</span>
+                    <span class="banner-val" id="b_pval">--</span>
+                </div>
+            </div>
+
+            <!-- 9 Core Statistical Metrics Grid -->
+            <div class="metrics-grid">
+                <div class="metric-card">
+                    <span class="metric-label">Baseline Accuracy</span>
+                    <span class="metric-value" id="m_accuracy">--%</span>
+                </div>
+                <div class="metric-card">
+                    <span class="metric-label">Error Rate & Persistence</span>
+                    <span class="metric-value" id="m_error">--%</span>
+                    <span class="metric-sub" id="m_persistence">Persistence: -- Qs</span>
+                </div>
+                <div class="metric-card">
+                    <span class="metric-label">Stability Index (StdDev)</span>
+                    <span class="metric-value" id="m_stability">--</span>
+                </div>
+                <div class="metric-card">
+                    <span class="metric-label">Mean Correct Latency</span>
+                    <span class="metric-value" id="m_correct_lat">-- ms</span>
+                </div>
+                <div class="metric-card">
+                    <span class="metric-label">Mean Error Latency</span>
+                    <span class="metric-value" id="m_error_lat">-- ms</span>
+                </div>
+                <div class="metric-card">
+                    <span class="metric-label">Latency Variance</span>
+                    <span class="metric-value" id="m_variance">--</span>
+                </div>
+                <div class="metric-card">
+                    <span class="metric-label">Avg Session Duration</span>
+                    <span class="metric-value" id="m_duration">-- s</span>
+                </div>
+                <div class="metric-card">
+                    <span class="metric-label">Throughput / Volume</span>
+                    <span class="metric-value" id="m_throughput">-- Qs</span>
+                </div>
+                <div class="metric-card">
+                    <span class="metric-label">Fatigue Slope</span>
+                    <span class="metric-value" id="m_fatigue">--</span>
+                </div>
+            </div>
+
+            <section class="chart-section">
+                <h3>Session Timeline & Transition Gaps</h3>
+                <div class="chart-container">
+                    <canvas id="timelineChart"></canvas>
+                </div>
+            </section>
+        </div>
+    </div>
+
+    <script>
+        let globalEvaluationData = null;
+        let timelineChartInstance = null;
+
+        async function uploadAndEvaluate() {
+            const fileInput = document.getElementById('csvFileInput');
+            if (!fileInput.files[0]) {
+                alert('Please select a metrics.csv file first.');
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('file', fileInput.files[0]);
+
+            try {
+                const response = await fetch('/analyze', { method: 'POST', body: formData });
+                const data = await response.json();
+                if (data.error) { alert('Error: ' + data.error); return; }
+
+                globalEvaluationData = data;
+                document.getElementById('dashboard').classList.remove('dashboard-hidden');
+                buildUserTabs();
+                showOverallStats();
+            } catch (err) {
+                alert('Failed to evaluate file: ' + err.message);
+            }
+        }
+
+        function buildUserTabs() {
+            const container = document.getElementById('userTabsContainer');
+            container.innerHTML = '<button class="tab-btn active" id="tab-overall" onclick="showOverallStats()">📊 Overall Summary</button>';
+            for (const userName in globalEvaluationData.users) {
+                const btn = document.createElement('button');
+                btn.className = 'tab-btn';
+                btn.id = `tab-${userName.replace(' ', '')}`;
+                btn.innerText = `👦 ${userName}`;
+                btn.onclick = () => showUserStats(userName);
+                container.appendChild(btn);
+            }
+        }
+
+        function setActiveTab(tabId) {
+            document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+            const target = document.getElementById(tabId);
+            if(target) target.classList.add('active');
+        }
+
+        function populateMetrics(stats) {
+            document.getElementById('m_accuracy').innerText = stats.baseline_accuracy + '%';
+            document.getElementById('m_error').innerText = stats.error_rate + '%';
+            document.getElementById('m_persistence').innerText = 'Persistence: ' + stats.error_persistence + ' Qs';
+            document.getElementById('m_stability').innerText = stats.stability_index;
+            document.getElementById('m_correct_lat').innerText = stats.mean_correct_latency + ' ms';
+            document.getElementById('m_error_lat').innerText = stats.mean_error_latency + ' ms';
+            document.getElementById('m_variance').innerText = stats.latency_variance;
+            document.getElementById('m_duration').innerText = stats.avg_session_duration + ' s';
+            document.getElementById('m_throughput').innerText = stats.throughput_volume + ' Qs';
+            document.getElementById('m_fatigue').innerText = stats.fatigue_slope + ' ms/turn';
+
+            // Improvement Banner Data
+            document.getElementById('b_trend').innerText = stats.trend_status;
+            document.getElementById('b_velocity').innerText = stats.efficiency_velocity;
+            document.getElementById('b_pval').innerText = `Z = ${stats.mann_kendall_z} (p = ${stats.mann_kendall_p})`;
+        }
+
+        function showOverallStats() {
+            setActiveTab('tab-overall');
+            document.getElementById('viewTitle').innerText = 'Overall Evaluation Dashboard';
+            document.getElementById('viewSubtitle').innerText = 'Aggregated performance metrics across all detected children.';
+            populateMetrics(globalEvaluationData.overall);
+            renderGlobalChart();
+        }
+
+        function showUserStats(userName) {
+            setActiveTab(`tab-${userName.replace(' ', '')}`);
+            const userData = globalEvaluationData.users[userName];
+            document.getElementById('viewTitle').innerText = `${userName} Profile`;
+            document.getElementById('viewSubtitle').innerText = `Individual behavioral, cognitive, and improvement metrics for ${userName}.`;
+            populateMetrics(userData.stats);
+            renderUserChart(userName, userData.scatter);
+        }
+
+        function renderGlobalChart() {
+            const ctx = document.getElementById('timelineChart').getContext('2d');
+            if (timelineChartInstance) timelineChartInstance.destroy();
+
+            // Group scatter points by user to assign individual colors with proper timeline gaps
+            const datasetsMap = {};
+            globalEvaluationData.global_scatter.forEach(pt => {
+                if (!datasetsMap[pt.user]) {
+                    datasetsMap[pt.user] = {
+                        label: pt.user,
+                        data: [],
+                        backgroundColor: pt.color,
+                        borderColor: pt.color,
+                        pointRadius: 6
+                    };
+                }
+                datasetsMap[pt.user].data.push({ x: pt.session_idx, y: pt.accuracy });
+            });
+
+            timelineChartInstance = new Chart(ctx, {
+                type: 'scatter',
+                data: { datasets: Object.values(datasetsMap) },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: { type: 'linear', title: { display: true, text: 'Global Sequential Session Index (with Time Gaps)' } },
+                        y: { title: { display: true, text: 'Accuracy %' }, min: 0, max: 100 }
+                    }
+                }
+            });
+        }
+
+        function renderUserChart(userName, scatterPoints) {
+            const ctx = document.getElementById('timelineChart').getContext('2d');
+            if (timelineChartInstance) timelineChartInstance.destroy();
+
+            const scatterData = scatterPoints.map(pt => ({ x: pt.session_idx, y: pt.accuracy }));
+
+            timelineChartInstance = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    datasets: [{
+                        label: `${userName} Accuracy Trend`,
+                        data: scatterData,
+                        borderColor: '#2ecc71',
+                        backgroundColor: 'rgba(46, 204, 113, 0.2)',
+                        fill: true,
+                        tension: 0.1,
+                        spanGaps: false, // Preserves gaps between intermittent sessions
+                        pointRadius: 6
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: { type: 'linear', title: { display: true, text: 'Global Session Index' } },
+                        y: { title: { display: true, text: 'Accuracy %' }, min: 0, max: 100 }
+                    }
+                }
+            });
+        }
+        function exportDashboardAsImage() {
+            const dashboardElement = document.getElementById('dashboard');
+            if (!dashboardElement || dashboardElement.classList.contains('dashboard-hidden')) {
+                alert('Please evaluate data first before exporting.');
+                return;
+            }
+
+    // Temporarily hide the button during snapshot capture
+            const exportBtn = document.getElementById('exportBtn');
+            exportBtn.style.display = 'none';
+
+            html2canvas(dashboardElement, { scale: 2, useCORS: true }).then(canvas => {
+                exportBtn.style.display = 'block'; // Restore button
+        
+        // Convert canvas to image and trigger download
+                const link = document.createElement('a');
+                link.download = 'Toy-Data-Evaluation-Report.png';
+                link.href = canvas.toDataURL('image/png');
+                link.click();
+            }).catch(err => {
+                exportBtn.style.display = 'block';
+                alert('Failed to export graphic: ' + err.message);
+            });
+        }
+    </script>
+</body>
+</html>
